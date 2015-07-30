@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 )
 
 // implements OSI layer 3 load balancer
@@ -51,12 +52,9 @@ func routeConn(c connection, ch chan struct{}) {
 	// connect to endpoint
 	intConn := connectTCP(c.routeTo.Addr.String())
 	extConn := c.conn
-	defer intConn.Close()
-	defer extConn.Close()
 	defer shutdown(ch)
 
-	go forward(extConn, intConn)
-	go forward(intConn, extConn)
+	forward(extConn, intConn)
 }
 
 func listenForConnections(addr *net.TCPAddr, r chan connection) {
@@ -74,7 +72,20 @@ func listenForConnections(addr *net.TCPAddr, r chan connection) {
 	}
 }
 
+// forwards traffic both ways and
 func forward(sender, receiver net.Conn) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	defer intConn.Close()
+	defer extConn.Close()
+	go copyio(receiver, sender)
+	go copyio(sender, receiver)
+	wg.Wait()
+}
+
+func copyio(sender, receiver net.Conn) {
+	defer wg.Done()
 	io.Copy(sender, receiver)
 }
 
