@@ -2,6 +2,7 @@ package trapeze
 
 import (
 	"fmt"
+	"io"
 	"net"
 )
 
@@ -20,6 +21,7 @@ type Proxy struct {
 	Addr         *net.TCPAddr
 	Endpoints    []ServiceEndpoint
 	loadBalancer LoadBalancer
+	connections  map[ServiceEndpoint][]connection
 }
 
 // keep slice of connections
@@ -29,22 +31,32 @@ func (p *Proxy) Layer3() {
 
 	// listen for incoming connections
 	// schedule ServiceEndpoints based on some algorithm
-	// pass scheduling algo to Layer3?
 
 	go listenForConnections(p.Addr, route)
 	for {
 		select {
 		case c := <-route:
-			conn := p.loadBalancer.NextEndpoint(p.Endpoints, c)
-			go routeConn(conn)
+			conn := p.loadBalancer.NextEndpoint(&p.Endpoints, c)
+			addConn(p.connections, conn)
+			go routeConn(conn, ch)
 		}
 	}
 }
 
-func routeConn(c connection) error {
-	// do routing
+func addConn(connections *map[ServiceEndpoint][]connection, conn connection) {
+	connections[conn.routeTo] = append(connections[conn.routeTo], conn)
+}
 
-	return nil
+func routeConn(c connection, ch chan struct{}) {
+	// connect to endpoint
+	intConn := connectTCP(c.routeTo.Addr.String())
+	extConn := c.conn
+	defer intConn.Close()
+	defer extConn.Close()
+	defer shutdown(ch)
+
+	go forward(extConn, intConn)
+	go forward(intConn, extConn)
 }
 
 func listenForConnections(addr *net.TCPAddr, r chan connection) {
@@ -55,5 +67,25 @@ func listenForConnections(addr *net.TCPAddr, r chan connection) {
 	}
 	for {
 		// listen for tcp connections
+		conn, _ := listener.Accept()
+		route <- connection{
+			conn: &conn,
+		}
 	}
+}
+
+func forward(sender, receiver net.Conn) {
+	io.Copy(sender, receiver)
+}
+
+func shutdown(ch chan struct{}) {
+	ch <- struct{}{}
+}
+
+func connectTCP(addr string) (net.Conn, error) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }

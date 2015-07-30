@@ -32,8 +32,9 @@ type ServiceEndpoint struct {
 }
 
 type connection struct {
-	clientAddr *net.TCPAddr
-	routedTo   *ServiceEndpoint
+	conn    *net.Conn
+	routeTo *ServiceEndpoint
+	closeCh chan struct{}
 }
 
 func (se *ServiceEndpoint) String() string {
