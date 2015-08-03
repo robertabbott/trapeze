@@ -7,10 +7,10 @@ import (
 	"sync"
 )
 
-// implements OSI layer 3 load balancer
-// layer three load balancing occurs at the dns
+// implements OSI layer 4 load balancer
+// layer four load balancing occurs at the tcp/udp
 // level. If you app/site/whatever has multiple
-// external IPs a layer 3 load balancer will route
+// external IPs a layer 4 load balancer will route
 // traffic between the 3 IPs without inspecting packets
 // for application specific information
 
@@ -19,15 +19,13 @@ import (
 // case is a slice of ServiceEndpoints
 
 type Proxy struct {
-	Addr         *net.TCPAddr
-	Endpoints    []ServiceEndpoint
+	Addr *net.TCPAddr
+
+	endpoints    []ServiceEndpoint
 	loadBalancer LoadBalancer
-	connections  map[ServiceEndpoint][]connection
 }
 
-// keep slice of connections
-
-func (p *Proxy) Layer3() {
+func (p *Proxy) Layer4() {
 	route := make(chan connection)
 
 	// listen for incoming connections
@@ -37,22 +35,22 @@ func (p *Proxy) Layer3() {
 	for {
 		select {
 		case c := <-route:
-			conn := p.loadBalancer.NextEndpoint(&p.Endpoints, c)
-			addConn(p.connections, conn)
+			p.addConn(c)
 			go routeConn(conn, ch)
 		}
 	}
 }
 
-func addConn(connections *map[ServiceEndpoint][]connection, conn connection) {
-	connections[conn.routeTo] = append(connections[conn.routeTo], conn)
+func (p *Proxy) addConn(conn connection) {
+	conn := p.loadBalancer.NextEndpoint(p.endpoints, c)
+	conn.routeTo.connections += 1
 }
 
-func routeConn(c connection, ch chan struct{}) {
+func (p *Proxy) routeConn(c connection, ch chan struct{}) {
 	// connect to endpoint
 	intConn := connectTCP(c.routeTo.Addr.String())
 	extConn := c.conn
-	defer shutdown(ch)
+	defer p.removeConn(c, ch)
 
 	forward(extConn, intConn)
 }
@@ -84,12 +82,13 @@ func forward(sender, receiver net.Conn) {
 	wg.Wait()
 }
 
-func copyio(sender, receiver net.Conn) {
+func copyio(sender, receiver net.Conn, wg sync.WaitGroup) {
 	defer wg.Done()
 	io.Copy(sender, receiver)
 }
 
-func shutdown(ch chan struct{}) {
+func (p *Proxy) removeConn(conn connection, ch chan struct{}) {
+	conn.routeTo.connections -= 1
 	ch <- struct{}{}
 }
 
