@@ -21,23 +21,34 @@ import (
 type Proxy struct {
 	Addr *net.TCPAddr
 
+	rpcAddr      *net.TCPAddr
 	endpoints    []ServiceEndpoint
 	loadBalancer LoadBalancer
+	connections  map[ServiceEndpoint]map[net.TCPAddr]connection
 }
 
 func (p *Proxy) Layer4() {
 	route := make(chan connection)
 
-	// listen for incoming connections
-	// schedule ServiceEndpoints based on some algorithm
+	go p.listenForEndpointRPCs()
 
+	// listen for incoming connections
+	// schedule ServiceEndpoints with NextEndpoint
 	go listenForConnections(p.Addr, route)
 	for {
 		select {
 		case c := <-route:
 			p.addConn(c)
-			go routeConn(conn, ch)
+			go routeConn(conn)
 		}
+	}
+}
+
+// listens on p.rpcAddr for join pool or leave pool
+// connections
+func (p *Proxy) listenForEndpointRPCs() {
+	for {
+
 	}
 }
 
@@ -46,11 +57,12 @@ func (p *Proxy) addConn(conn connection) {
 	conn.routeTo.connections += 1
 }
 
-func (p *Proxy) routeConn(c connection, ch chan struct{}) {
+func (p *Proxy) routeConn(c connection) {
 	// connect to endpoint
+	c.closeCh = make(chan struct{})
 	intConn := connectTCP(c.routeTo.Addr.String())
 	extConn := c.conn
-	defer p.removeConn(c, ch)
+	defer p.removeConn(c)
 
 	forward(extConn, intConn)
 }
@@ -87,9 +99,11 @@ func copyio(sender, receiver net.Conn, wg sync.WaitGroup) {
 	io.Copy(sender, receiver)
 }
 
-func (p *Proxy) removeConn(conn connection, ch chan struct{}) {
+func (p *Proxy) removeConn(conn connection) {
+	// delete: map = p.connections[routeTo] key = conn.conn.RemoteAddr()
+	delete(p.connections[conn.routeTo], conn.conn.RemoteAddr())
 	conn.routeTo.connections -= 1
-	ch <- struct{}{}
+	conn.closeCh <- struct{}{}
 }
 
 func connectTCP(addr string) (net.Conn, error) {
