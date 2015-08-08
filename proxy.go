@@ -3,6 +3,7 @@ package trapeze
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
 )
@@ -22,24 +23,30 @@ type Proxy struct {
 	Addr *net.TCPAddr
 
 	rpcAddr      *net.TCPAddr
-	endpoints    []ServiceEndpoint
-	loadBalancer LoadBalancer
-	connections  map[ServiceEndpoint]map[*net.Addr]Connection
+	Endpoints    []ServiceEndpoint
+	LoadBalancer LoadBalancer
+	Connections  map[ServiceEndpoint]map[*net.Addr]Connection
 }
 
 func (p *Proxy) Layer4() {
 	route := make(chan Connection)
+	errCh := make(chan error)
 
 	go p.listenForEndpointRPCs()
 
 	// listen for incoming connections
 	// schedule ServiceEndpoints with NextEndpoint
-	go listenForConnections(p.Addr, route)
+	go listenForConnections(p.Addr, route, errCh)
 	for {
+		fmt.Println("waiting for conns")
 		select {
 		case c := <-route:
+			fmt.Println("connection received. Routing.")
 			p.addConn(c)
 			go p.routeConn(c)
+		case err := <-errCh:
+			fmt.Println("shutting down")
+			log.Fatal(err)
 		}
 	}
 }
@@ -53,34 +60,33 @@ func (p *Proxy) listenForEndpointRPCs() {
 }
 
 func (p *Proxy) addConn(conn Connection) {
-	conn = p.loadBalancer.NextEndpoint(p.endpoints, conn)
-	conn.routeTo.Connections += 1
+	conn = p.LoadBalancer.NextEndpoint(p.Endpoints, conn)
+	conn.RouteTo.Connections += 1
 }
 
 func (p *Proxy) routeConn(c Connection) {
 	// connect to endpoint
-	c.closeCh = make(chan struct{})
-	intConn, err := connectTCP(c.routeTo.Addr.String())
+	c.CloseCh = make(chan struct{})
+	intConn, err := connectTCP(c.RouteTo.Addr.String())
 	if err != nil {
 		return
 	}
-	extConn := c.conn
+	extConn := c.Conn
 	defer p.removeConn(c)
 
 	forward(*extConn, intConn)
 }
 
-func listenForConnections(addr *net.TCPAddr, r chan Connection) {
+func listenForConnections(addr *net.TCPAddr, r chan Connection, sdCh chan error) {
 	listener, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		fmt.Println(err)
-		return
+		sdCh <- err
 	}
 	for {
 		// listen for tcp connections
 		conn, _ := listener.Accept()
 		r <- Connection{
-			conn: &conn,
+			Conn: &conn,
 		}
 	}
 }
@@ -104,11 +110,11 @@ func copyio(sender, receiver net.Conn, wg sync.WaitGroup) {
 
 func (p *Proxy) removeConn(conn Connection) {
 	// delete: map = p.connections[routeTo] key = conn.conn.RemoteAddr()
-	key := *conn.conn
+	key := *conn.Conn
 	keyAddr := key.RemoteAddr()
-	delete(p.connections[*conn.routeTo], &keyAddr)
-	conn.routeTo.Connections -= 1
-	conn.closeCh <- struct{}{}
+	delete(p.Connections[*conn.RouteTo], &keyAddr)
+	conn.RouteTo.Connections -= 1
+	conn.CloseCh <- struct{}{}
 }
 
 func connectTCP(addr string) (net.Conn, error) {

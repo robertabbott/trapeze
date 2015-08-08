@@ -3,7 +3,6 @@ package trapeze
 import (
 	"fmt"
 	"net"
-	"sync"
 )
 
 // interface for load balancer
@@ -23,8 +22,7 @@ type ServiceEndpoint struct {
 	Addr *net.TCPAddr
 	Port int
 
-	Connections int          // count active Connections
-	connLock    sync.RWMutex // guards conn count on this endpoint
+	Connections int // count active Connections
 
 	// maybe somewhere down the line associate ServiceEndpoint
 	// with resources allocated to that service in order to do
@@ -32,9 +30,9 @@ type ServiceEndpoint struct {
 }
 
 type Connection struct {
-	conn    *net.Conn
-	routeTo *ServiceEndpoint
-	closeCh chan struct{}
+	Conn    *net.Conn
+	RouteTo *ServiceEndpoint
+	CloseCh chan struct{}
 }
 
 func (se *ServiceEndpoint) String() string {
