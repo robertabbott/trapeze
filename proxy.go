@@ -24,11 +24,11 @@ type Proxy struct {
 	rpcAddr      *net.TCPAddr
 	endpoints    []ServiceEndpoint
 	loadBalancer LoadBalancer
-	connections  map[ServiceEndpoint]map[net.TCPAddr]connection
+	connections  map[ServiceEndpoint]map[*net.Addr]Connection
 }
 
 func (p *Proxy) Layer4() {
-	route := make(chan connection)
+	route := make(chan Connection)
 
 	go p.listenForEndpointRPCs()
 
@@ -39,7 +39,7 @@ func (p *Proxy) Layer4() {
 		select {
 		case c := <-route:
 			p.addConn(c)
-			go routeConn(conn)
+			go p.routeConn(c)
 		}
 	}
 }
@@ -52,22 +52,25 @@ func (p *Proxy) listenForEndpointRPCs() {
 	}
 }
 
-func (p *Proxy) addConn(conn connection) {
-	conn := p.loadBalancer.NextEndpoint(p.endpoints, c)
-	conn.routeTo.connections += 1
+func (p *Proxy) addConn(conn Connection) {
+	conn = p.loadBalancer.NextEndpoint(p.endpoints, conn)
+	conn.routeTo.Connections += 1
 }
 
-func (p *Proxy) routeConn(c connection) {
+func (p *Proxy) routeConn(c Connection) {
 	// connect to endpoint
 	c.closeCh = make(chan struct{})
-	intConn := connectTCP(c.routeTo.Addr.String())
+	intConn, err := connectTCP(c.routeTo.Addr.String())
+	if err != nil {
+		return
+	}
 	extConn := c.conn
 	defer p.removeConn(c)
 
-	forward(extConn, intConn)
+	forward(*extConn, intConn)
 }
 
-func listenForConnections(addr *net.TCPAddr, r chan connection) {
+func listenForConnections(addr *net.TCPAddr, r chan Connection) {
 	listener, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		fmt.Println(err)
@@ -76,7 +79,7 @@ func listenForConnections(addr *net.TCPAddr, r chan connection) {
 	for {
 		// listen for tcp connections
 		conn, _ := listener.Accept()
-		route <- connection{
+		r <- Connection{
 			conn: &conn,
 		}
 	}
@@ -87,10 +90,10 @@ func forward(sender, receiver net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	defer intConn.Close()
-	defer extConn.Close()
-	go copyio(receiver, sender)
-	go copyio(sender, receiver)
+	defer sender.Close()
+	defer receiver.Close()
+	go copyio(receiver, sender, wg)
+	go copyio(sender, receiver, wg)
 	wg.Wait()
 }
 
@@ -99,10 +102,12 @@ func copyio(sender, receiver net.Conn, wg sync.WaitGroup) {
 	io.Copy(sender, receiver)
 }
 
-func (p *Proxy) removeConn(conn connection) {
+func (p *Proxy) removeConn(conn Connection) {
 	// delete: map = p.connections[routeTo] key = conn.conn.RemoteAddr()
-	delete(p.connections[conn.routeTo], conn.conn.RemoteAddr())
-	conn.routeTo.connections -= 1
+	key := *conn.conn
+	keyAddr := key.RemoteAddr()
+	delete(p.connections[*conn.routeTo], &keyAddr)
+	conn.routeTo.Connections -= 1
 	conn.closeCh <- struct{}{}
 }
 
