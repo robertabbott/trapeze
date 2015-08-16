@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/gob"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
@@ -22,7 +23,7 @@ type LoadBalancer struct {
 func main() {
 	lb := LoadBalancer{
 		Addr: &net.TCPAddr{
-			IP:   []byte("127.0.0.1"),
+			//IP:   []byte("127.0.0.1"),
 			Port: 3069,
 		},
 	}
@@ -54,8 +55,9 @@ func main() {
 
 	for {
 		// load balancer should route requests to 6868 and 6969
-		SendStructTCP("127.0.0.1:3069", Str{"seamus"})
 		time.Sleep(500 * time.Millisecond)
+		fmt.Println("sending struct to port 3069")
+		SendStructTCP("127.0.0.1:3069", Str{"seamus"})
 	}
 }
 
@@ -74,12 +76,19 @@ func RunTCPServer(port int) {
 }
 
 func HandleConnection(conn net.Conn) {
+	fname := ""
+	if conn.LocalAddr().String() == "127.0.0.1:6969" {
+		fname = "/tmp/dat6969"
+	} else if conn.LocalAddr().String() == "127.0.0.1:6868" {
+		fname = "/tmp/dat6868"
+	} else {
+		fname = "/tmp/seamus"
+	}
 	dec := gob.NewDecoder(conn)
 	p := &Str{}
 	dec.Decode(p)
-	fmt.Println(conn.RemoteAddr())
-	fmt.Println(p.St)
-	fmt.Println(conn.LocalAddr())
+	s := []byte(conn.RemoteAddr().String() + "\n" + p.St + "\n")
+	ioutil.WriteFile(fname, s, 0644)
 }
 
 // pick endpoint from list at random

@@ -36,6 +36,7 @@ func (p *Proxy) Layer4() {
 
 	// listen for incoming connections
 	// schedule ServiceEndpoints with NextEndpoint
+	fmt.Println(fmt.Sprintf("listening at %v", p.Addr))
 	go listenForConnections(p.Addr, route, errCh)
 	for {
 		fmt.Println("waiting for conns")
